@@ -8,25 +8,27 @@ from apiclient import discovery
 from oauth2client import client
 from oauth2client import tools
 
+CLIENT_SECRET_FILE = os.path.join(PATH, 'client_secret.json')
+SCOPES = ['https://www.googleapis.com/auth/analytics.edit','https://www.googleapis.com/auth/drive.file']
+APPLICATION_NAME = 'El Arte de Medir'
 
 accountId='50425604'
 webPropertyId='UA-50425604-20'
 customDataSourceId='K6K5TVRfRp-epCbZ9ZvmLw'
+gaDate = 'ga:date'
+csvColumns = 6
+
+file_id = '1Oxt6sTMjXmexxdd4pRykAhC07fO0tknMK60uzsgxvFw'
+file_name = 'googleAnalyticsCostData.csv'
 
 filename = inspect.getframeinfo(inspect.currentframe()).filename
 PATH = os.path.dirname(os.path.abspath(filename))
 os.chdir(PATH)
 OUT_PATH = os.path.join(PATH, 'out')
 
+
 if not os.path.exists(OUT_PATH):
     os.makedirs(OUT_PATH)
-
-CLIENT_SECRET_FILE = os.path.join(PATH, 'client_secret.json')
-#CLIENT_SECRET_FILE = 'client_secret.json'
-SCOPES = ['https://www.googleapis.com/auth/analytics.edit','https://www.googleapis.com/auth/drive.file']
-APPLICATION_NAME = 'El Arte de Medir'
-
-
 
 
 def get_credentials():
@@ -58,43 +60,6 @@ def get_credentials():
         print('Storing credentials to ' + credential_path)
     return credentials
 
-def get_service(api_name, api_version, scope, client_secrets_path):
-  """Get a service that communicates to a Google API.
-
-  Args:
-    api_name: string The name of the api to connect to.
-    api_version: string The api version to connect to.
-    scope: A list of strings representing the auth scopes to authorize for the
-      connection.
-    client_secrets_path: string A path to a valid client secrets file.
-
-  Returns:
-    A service that is connected to the specified API.
-  """
-
-  # Set up a Flow object to be used if we need to authenticate.
-  flow = client.flow_from_clientsecrets(
-      client_secrets_path, scope=scope,
-      message=tools.message_if_missing(client_secrets_path))
-
-  # Prepare credentials, and authorize HTTP object with them.
-  # If the credentials don't exist or are invalid run through the native client
-  # flow. The Storage object will ensure that if successful the good
-  # credentials will get written back to a file.
-  storage = file.Storage(api_name + '.dat')
-  flags = tools.argparser.parse_args(args=[])
-  credentials = storage.get()
-  if credentials is None or credentials.invalid:
-    credentials = tools.run_flow(flow, storage, flags)
-  http = credentials.authorize(http=httplib2.Http())
-
-  # Build the service object.
-  service = build(api_name, api_version, http=http)
-
-  return service
-
-
-
 
 def list_custom_data_sources(service):
     try:
@@ -112,9 +77,7 @@ def list_custom_data_sources(service):
   # Handle API errors.
       print ('There was an API error : %s : %s' %
          (error.resp.status, error.resp.reason))
-# Example #2:
-# The results of the list method are stored in the uploads object.
-# The following code shows how to iterate through them.
+
     for upload in uploads.get('items', []):
       print 'Upload Id             = %s' % upload.get('id')
       print 'Upload Kind           = %s' % upload.get('kind')
@@ -122,20 +85,41 @@ def list_custom_data_sources(service):
       print 'Custom Data Source Id = %s' % upload.get('customDataSourceId')
       print 'Upload Status         = %s\n' % upload.get('status')    
 
-  
 
+
+def check_csv_file(file):
+    import csv
+    with open(file, 'rU') as f:
+     reader = csv.reader(f, delimiter=',')
+     header = next(reader)
+     print header[0]
+     if gaDate != header[0]: 
+         print ' %s dimension not found' % header
+         return False     
+     for row in reader:
+         print(len(row))
+         if len(row) != csvColumns:
+            print 'Invalid number of columns. Should be %s' % csvColumns
+            return False
+     return True
+
+  
 def upload_cost_file(service, filename):
     try:
-      media = MediaFileUpload(
-          filename, # The CSV file to upload
-          mimetype='application/octet-stream',
-          resumable=False)
+      valid = check_csv_file(filename)
+      if valid:
+          media = MediaFileUpload(
+              os.path.join(OUT_PATH, filename), 
+              mimetype='application/octet-stream',
+              resumable=False)
 
-      return service.management().uploads().uploadData (
-          accountId=accountId,
-          webPropertyId=webPropertyId,
-          customDataSourceId=customDataSourceId, 
-          media_body=media).execute()
+          return service.management().uploads().uploadData (
+              accountId=accountId,
+              webPropertyId=webPropertyId,
+              customDataSourceId=customDataSourceId, 
+              media_body=media).execute()
+      else:
+        print 'Wrong CSV fomat in file: %s' % filename
 
     except TypeError, error:
       # Handle errors in constructing a query.
@@ -148,71 +132,44 @@ def upload_cost_file(service, filename):
 
 
 def download_file(service, file_id, file_name):
-    #request = service.files().get_media(fileId=file_id)
+
     request = service.files().export_media(fileId=file_id,
                                              mimeType='text/csv')
-    #fh = io.BytesIO()
-    fh = io.FileIO(file_name, 'wb')
+    fh = io.FileIO(os.path.join(OUT_PATH, file_name), 'wb')
     downloader = MediaIoBaseDownload(fh, request)
     done = False
     while done is False:
         status, done = downloader.next_chunk()
         print("Download %d%%." % int(status.progress() * 100))
 
-def main():
+def upload_file(service, file_name, mime_type):
+    file_metadata = {
+      'name' : file_name,
+      'mimeType' : 'application/vnd.google-apps.spreadsheet'
+    }
+    media = MediaFileUpload(file_name,
+                        mimetype=mime_type,
+                        resumable=True)
+    file = service.files().create(body=file_metadata,
+                                    media_body=media,
+                                    fields='id').execute()
+    print 'File ID: %s' % file.get('id')   
+    return file.get('id')
 
-  # Define the auth scopes to request.
-    #scope = ['https://www.googleapis.com/auth/analytics.edit','https://www.googleapis.com/auth/drive.file']
+def main():
 
     credentials = get_credentials()
     http = credentials.authorize(httplib2.Http())
     drive_service = discovery.build('drive', 'v3', http=http)
     analytics_service = discovery.build('analytics', 'v3', http=http)
-
-  # Authenticate and construct service.
-    #analytics = get_service('analytics', 'v3', scope, './client_secret.json')
-
-    #drive = get_service('drive', 'v3', 'https://www.googleapis.com/auth/drive.file', './client_secret.json')
-  
-    file_metadata = {
-      'name' : 'googleAnalyticsCostData.csv',
-      'mimeType' : 'application/vnd.google-apps.spreadsheet'
-    }
-    media = MediaFileUpload('./October-Cost-Data/2012-11-01.csv',
-                        mimetype='text/csv',
-                        resumable=True)
-    #file = drive.files().create(body=file_metadata,
-    #                                media_body=media,
-    #                                fields='id').execute()
-    #print 'File ID: %s' % file.get('id')
-
-    file_id = '1vSYj_5v7uCJJcG1ywQ_u7YGwh4puamrD5QnBXqTrXNA'
-    file_name = 'googleAnalyticsCostData.csv'
-
-
-    #list_custom_data_sources(analytics)
+    
+    if not file_id:
+        file_id = upload_file(drive_service, file_name, mime_type='text/csv')
 
     download_file(drive_service, file_id, file_name)
-    #upload_cost_file(analytics, file_name)
     upload_cost_file(analytics_service, file_name)
 
-ga_date = 'ga:date'
-def check_csv_file(file):
-    import csv
-    with open(file, 'rU') as f:
-     reader = csv.reader(f, delimiter=',')
-     for row in reader:
-         print(len(row))
-         if len(row) != 6:
-            print 'Invalid row length.'
-            return
-        
-         if ga_date == row[0]: # if the username shall be on column 3 (-> index 2)
-             print "is in file"
-             return
-
-
-# check_csv_file('./October-Cost-Data/2012-11-01.csv')
+    #list_custom_data_sources(analytics)
 
 if __name__ == '__main__':
   main()
