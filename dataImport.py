@@ -1,5 +1,6 @@
 import io
 import os
+import httplib2
 import oauth2client
 
 from apiclient.http import MediaFileUpload
@@ -8,23 +9,25 @@ from apiclient import discovery
 from oauth2client import client
 from oauth2client import tools
 
-CLIENT_SECRET_FILE = os.path.join(PATH, 'client_secret.json')
-SCOPES = ['https://www.googleapis.com/auth/analytics.edit','https://www.googleapis.com/auth/drive.file']
-APPLICATION_NAME = 'El Arte de Medir'
+
+
+
 
 accountId='50425604'
 webPropertyId='UA-50425604-20'
-customDataSourceId='K6K5TVRfRp-epCbZ9ZvmLw'
-gaDate = 'ga:date'
-csvColumns = 6
+customDataSourceId='iqavbsG8Tdivt5kzjSktbg'
+schema = ['ga:date','ga:source','ga:medium','ga:campaign','ga:keyword','ga:impressions','ga:adClicks','ga:adCost']
 
-file_id = '1Oxt6sTMjXmexxdd4pRykAhC07fO0tknMK60uzsgxvFw'
-file_name = 'googleAnalyticsCostData.csv'
 
-filename = inspect.getframeinfo(inspect.currentframe()).filename
-PATH = os.path.dirname(os.path.abspath(filename))
+#filename = inspect.getframeinfo(inspect.currentframe()).filename
+#PATH = os.path.dirname(os.path.abspath(__file__))
+PATH = '/Users/JOSE/Documents/GitHub/google-apis'
 os.chdir(PATH)
 OUT_PATH = os.path.join(PATH, 'out')
+
+SCOPES = ['https://www.googleapis.com/auth/analytics.edit','https://www.googleapis.com/auth/drive.file']
+APPLICATION_NAME = 'El Arte de Medir'
+CLIENT_SECRET_FILE = os.path.join(PATH, 'client_secrets.json')
 
 
 if not os.path.exists(OUT_PATH):
@@ -55,7 +58,7 @@ def get_credentials():
         flow.user_agent = APPLICATION_NAME
         if flags:
             credentials = tools.run_flow(flow, store, flags)
-        else: # Needed only for compatibility with Python 2.6
+        else: # Python 2.6
             credentials = tools.run(flow, store)
         print('Storing credentials to ' + credential_path)
     return credentials
@@ -86,30 +89,37 @@ def list_custom_data_sources(service):
       print 'Upload Status         = %s\n' % upload.get('status')    
 
 
-
 def check_csv_file(file):
     import csv
     with open(file, 'rU') as f:
-     reader = csv.reader(f, delimiter=',')
-     header = next(reader)
-     print header[0]
-     if gaDate != header[0]: 
-         print ' %s dimension not found' % header
-         return False     
-     for row in reader:
-         print(len(row))
-         if len(row) != csvColumns:
-            print 'Invalid number of columns. Should be %s' % csvColumns
+        dictReader = csv.DictReader(f, delimiter=',')
+        # print dictReader.fieldnames
+        count = 0
+        for row in dictReader.fieldnames:
+            #print(row)
+            if row in schema:
+                # print "found %s %s"%(row, row in row)
+                count += 1
+        if count != len(schema):
             return False
-     return True
+        else:
+            return True
+ 
+    #check_csv_file('out/googleAnalyticsCostData.csv')
 
-  
+def create_csv_schema(file):
+    import csv
+    f = open(file, 'wb')
+    wr = csv.writer(f, quoting=csv.QUOTE_ALL)
+    wr.writerow(schema)
+
+
 def upload_cost_file(service, filename):
     try:
       valid = check_csv_file(filename)
       if valid:
           media = MediaFileUpload(
-              os.path.join(OUT_PATH, filename), 
+              filename, 
               mimetype='application/octet-stream',
               resumable=False)
 
@@ -156,6 +166,18 @@ def upload_file(service, file_name, mime_type):
     print 'File ID: %s' % file.get('id')   
     return file.get('id')
 
+def save_file_id(file_id):
+    f = open( '.fileid', 'w' )
+    f.write( file_id )
+    f.close()
+    
+def read_file_id():
+    if os.path.exists('.fileid'):
+        f = open( '.fileid', 'r' )
+        file_id = f.read()
+        return file_id
+
+
 def main():
 
     credentials = get_credentials()
@@ -163,13 +185,17 @@ def main():
     drive_service = discovery.build('drive', 'v3', http=http)
     analytics_service = discovery.build('analytics', 'v3', http=http)
     
-    if not file_id:
+    file_name = 'googleAnalyticsData.csv'
+    
+    file_id = read_file_id()
+    if file_id:
+        download_file(drive_service, file_id, file_name)
+        upload_cost_file(analytics_service, os.path.join(OUT_PATH, file_name))
+    else:
+        create_csv_schema(file_name)
         file_id = upload_file(drive_service, file_name, mime_type='text/csv')
+        save_file_id(file_id)            
 
-    download_file(drive_service, file_id, file_name)
-    upload_cost_file(analytics_service, file_name)
-
-    #list_custom_data_sources(analytics)
 
 if __name__ == '__main__':
   main()
