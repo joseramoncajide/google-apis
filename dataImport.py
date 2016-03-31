@@ -1,3 +1,5 @@
+#!/Users/JOSE/anaconda/bin/python
+
 import io
 import os
 import httplib2
@@ -17,8 +19,8 @@ accountId='50425604'
 webPropertyId='UA-50425604-20'
 customDataSourceId='iqavbsG8Tdivt5kzjSktbg'
 schema = ['ga:date','ga:source','ga:medium','ga:campaign','ga:keyword','ga:impressions','ga:adClicks','ga:adCost']
-
-
+file_name = 'Campaign Costs.csv'
+folder_name = 'Google Analytics Data'
 #filename = inspect.getframeinfo(inspect.currentframe()).filename
 #PATH = os.path.dirname(os.path.abspath(__file__))
 PATH = '/Users/JOSE/Documents/GitHub/google-apis'
@@ -152,9 +154,22 @@ def download_file(service, file_id, file_name):
         status, done = downloader.next_chunk()
         print("Download %d%%." % int(status.progress() * 100))
 
-def upload_file(service, file_name, mime_type):
+def create_folder(service, folder_name):
+    file_metadata = {
+        'name': folder_name,
+        'mimeType': 'application/vnd.google-apps.folder'
+    }
+    file = service.files().create(body=file_metadata,
+                                        fields='id').execute()
+    print 'Folder ID: %s' % file.get('id')
+    return file.get('id')
+
+
+def upload_file(service, file_name, folder_id, mime_type):
+    print 'Foilder id is %s' % folder_id,
     file_metadata = {
       'name' : file_name,
+      'parents' : [{"id": folder_id}],
       'mimeType' : 'application/vnd.google-apps.spreadsheet'
     }
     media = MediaFileUpload(file_name,
@@ -166,14 +181,26 @@ def upload_file(service, file_name, mime_type):
     print 'File ID: %s' % file.get('id')   
     return file.get('id')
 
+def move_file(service, file_id, folder_id):
+    # Retrieve the existing parents to remove
+    file = service.files().get(fileId=file_id,
+                                     fields='parents').execute();
+    previous_parents = ",".join(file.get('parents'))
+    # Move the file to the new folder
+    file = service.files().update(fileId=file_id,
+                                        addParents=folder_id,
+                                        removeParents=previous_parents,
+                                        fields='id, parents').execute()
+
+
 def save_file_id(file_id):
-    f = open( '.fileid', 'w' )
+    f = open( '.nodelete', 'w' )
     f.write( file_id )
     f.close()
     
 def read_file_id():
-    if os.path.exists('.fileid'):
-        f = open( '.fileid', 'r' )
+    if os.path.exists('.nodelete'):
+        f = open( '.nodelete', 'r' )
         file_id = f.read()
         return file_id
 
@@ -185,16 +212,20 @@ def main():
     drive_service = discovery.build('drive', 'v3', http=http)
     analytics_service = discovery.build('analytics', 'v3', http=http)
     
-    file_name = 'googleAnalyticsData.csv'
+
     
     file_id = read_file_id()
     if file_id:
         download_file(drive_service, file_id, file_name)
         upload_cost_file(analytics_service, os.path.join(OUT_PATH, file_name))
     else:
+
+        folder_id = create_folder(drive_service, folder_name)
         create_csv_schema(file_name)
-        file_id = upload_file(drive_service, file_name, mime_type='text/csv')
-        save_file_id(file_id)            
+        file_id = upload_file(drive_service, file_name, folder_id, mime_type='text/csv')
+        move_file(drive_service, file_id, folder_id)
+        save_file_id(file_id)
+        os.remove(file_name)
 
 
 if __name__ == '__main__':
